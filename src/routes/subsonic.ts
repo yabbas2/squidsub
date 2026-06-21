@@ -135,6 +135,7 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
   async function handleStream(request: any, reply: any, asDownload = false) {
     const params = await extractAllParameters(request);
     const id = params['id'] || '';
+    const format = getFormat(params);
 
     const parsed = parseExternalId(id);
 
@@ -154,26 +155,28 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
         return reply.header('Content-Type', contentType).send(result.body);
       } catch (err: any) {
         if (err.message?.includes('404')) {
-          return sendReply(reply, createError(request.url, 70, 'Song not found'), getFormat(params));
+          return sendReply(reply, createError(request.url, 70, 'Song not found'), format);
         }
         throw err;
       }
     }
 
     // External track — download and stream
-    const signal = request.raw?.aborted ? undefined : AbortSignal.timeout(30000);
-    const { stream, filePath } = await downloadService.downloadAndStreamAsync(parsed.provider, parsed.externalId, signal);
+    try {
+      const { stream, filePath } = await downloadService.downloadAndStreamAsync(parsed.provider, parsed.externalId, undefined);
+      const ext = filePath.endsWith('.flac') ? 'audio/flac' : filePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/mpeg';
 
-    const ext = filePath.endsWith('.flac') ? 'audio/flac' : filePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/mpeg';
+      if (asDownload) {
+        const fileName = filePath.split('/').pop() || 'track.mp3';
+        return reply.header('Content-Type', ext)
+          .header('Content-Disposition', `attachment; filename="${fileName}"`)
+          .send(stream);
+      }
 
-    if (asDownload) {
-      const fileName = filePath.split('/').pop() || 'track.mp3';
-      return reply.header('Content-Type', ext)
-        .header('Content-Disposition', `attachment; filename="${fileName}"`)
-        .send(stream);
+      return reply.header('Content-Type', ext).send(stream);
+    } catch (err: any) {
+      return sendReply(reply, createError(request.url, 70, `Failed to stream: ${err.message}`), format);
     }
-
-    return reply.header('Content-Type', ext).send(stream);
   }
 
   // --- getSong ---
