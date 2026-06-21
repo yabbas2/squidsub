@@ -261,24 +261,28 @@ export class AmazonMusicProvider implements ISquidWTFProvider {
       signal,
     });
 
-    // Try direct prepare first
-    const prepRes = await fetch(`${baseUrl}/api/download/track/prepare`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...(token ? { 'X-Captcha-Token': token } : {}),
-      },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    if (prepRes.ok) {
-      const prepData = await prepRes.json() as AmazonDownloadPrepareResponse;
-      const prepUrl = this.resolveDownloadUrl(prepData.directUrl);
-      if (prepUrl) {
-        const dlRes = await fetch(prepUrl, { signal });
-        if (dlRes.ok) return new Uint8Array(await dlRes.arrayBuffer());
+    // Try direct prepare first (fall through to async job on any failure — matches C#)
+    try {
+      const prepRes = await fetch(`${baseUrl}/api/download/track/prepare`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...(token ? { 'X-Captcha-Token': token } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (prepRes.ok) {
+        const prepData = await prepRes.json() as AmazonDownloadPrepareResponse;
+        const prepUrl = this.resolveDownloadUrl(prepData.directUrl);
+        if (prepUrl) {
+          const dlRes = await fetch(prepUrl, { signal });
+          if (dlRes.ok) return new Uint8Array(await dlRes.arrayBuffer());
+        }
       }
+    } catch {
+      // Fall through to async job
     }
 
     // Start async job
