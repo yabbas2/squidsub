@@ -17,12 +17,15 @@ import { SearchResult } from '../models/search-result.js';
 import { Song, Album } from '../models/song.js';
 import { ExternalPlaylist } from '../models/subsonic-types.js';
 import { parseExternalId } from '../utils/id-helper.js';
+import { normalizeForComparison } from '../utils/string-normalizer.js';
+import { XMLParser } from 'fast-xml-parser';
 
 interface ServiceContainer {
   proxyService: SubsonicProxyService;
   modelMapper: SubsonicModelMapper;
   metadataService: {
     searchAllAsync(query: string, songLimit?: number, albumLimit?: number, artistLimit?: number): Promise<SearchResult>;
+    searchAlbumsAsync(query: string, limit?: number): Promise<Album[]>;
     getSongAsync(provider: string, externalId: string): Promise<Song | null>;
     getAlbumAsync(provider: string, externalId: string): Promise<Album | null>;
     getArtistAsync(provider: string, externalId: string): Promise<import('../models/song.js').Artist | null>;
@@ -314,15 +317,126 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
     const { isExternal, provider, type, externalId } = parseExternalId(id);
 
     if (!isExternal || !provider || !externalId) {
-      // Relay to Navidrome
-      try {
-        const result = await proxyService.relayAsync('rest/getAlbum', params);
-        return reply.header('Content-Type', result.contentType || 'text/xml').send(result.body);
-      } catch {
+      // Local Navidrome album — fetch local data, then merge with external songs
+      const navResult = await proxyService.relaySafeAsync('rest/getAlbum', params);
+      if (!navResult.success || !navResult.body) {
         return sendReply(reply, createError(request.url, 70, 'Album not found'), format);
       }
+
+      const isJson = navResult.contentType?.includes('json') === true;
+      if (!isJson) {
+        // XML — pass through raw Navidrome response (no XML merge for now)
+        return reply.header('Content-Type', navResult.contentType || 'text/xml').send(navResult.body);
+      }
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(navResult.body.toString());
+      } catch {
+        return reply.header('Content-Type', navResult.contentType || 'text/xml').send(navResult.body);
+      }
+
+      const albumEl = parsed?.['subsonic-response']?.album || {};
+      const albumName: string = albumEl.name || albumEl.title || '';
+      const artistName: string = albumEl.artist || '';
+      const localSongs: Record<string, unknown>[] = Array.isArray(albumEl.song)
+        ? albumEl.song
+        : albumEl.song ? [albumEl.song] : [];
+
+      if (!albumName || !artistName) {
+        return reply.header('Content-Type', navResult.contentType || 'text/xml').send(navResult.body);
+      }
+
+      // Phase 1-3: Search external provider for matching songs
+      const searchQuery = `${artistName} ${albumName}`;
+      const config = getConfig();
+      let externalSongs: Song[] = [];
+
+      // Phase 1: Exact album match
+      const externalAlbums = await metadataService.searchAlbumsAsync(searchQuery, 5);
+      for (const candidate of externalAlbums) {
+        if (candidate.artist?.toLowerCase() === artistName.toLowerCase() &&
+            candidate.title.toLowerCase() === albumName.toLowerCase()) {
+          const matched = await metadataService.getAlbumAsync(
+            candidate.externalProvider || config.SQUIDWTF__SOURCE,
+            candidate.externalId || '',
+          );
+          if (matched?.songs?.length) {
+            externalSongs = matched.songs;
+            break;
+          }
+        }
+      }
+
+      // Phase 2: Fuzzy album match (substring)
+      if (externalSongs.length === 0) {
+        for (const candidate of externalAlbums) {
+          if (candidate.artist?.toLowerCase().includes(artistName.toLowerCase()) &&
+              (candidate.title.toLowerCase().includes(albumName.toLowerCase()) ||
+               albumName.toLowerCase().includes(candidate.title.toLowerCase()))) {
+            const matched = await metadataService.getAlbumAsync(
+              candidate.externalProvider || config.SQUIDWTF__SOURCE,
+              candidate.externalId || '',
+            );
+            if (matched?.songs?.length) {
+              externalSongs = matched.songs;
+              break;
+            }
+          }
+        }
+      }
+
+      // Phase 3: Individual song search as last resort
+      if (externalSongs.length === 0) {
+        const songSearch = await metadataService.searchAllAsync(searchQuery, 50, 0, 0);
+        externalSongs = songSearch.songs.filter(
+          s => s.artist?.toLowerCase().includes(artistName.toLowerCase()),
+        );
+      }
+
+      // Merge local + external songs (dedup by title)
+      if (externalSongs.length > 0) {
+        const localTitles = new Set(
+          localSongs.map(s => normalizeForComparison((s.title as string || '')).toLowerCase()),
+        );
+
+        const mergedSongs: Record<string, unknown>[] = [...localSongs];
+        for (const extSong of externalSongs) {
+          const normalizedTitle = normalizeForComparison(extSong.title).toLowerCase();
+          if (!localTitles.has(normalizedTitle)) {
+            const songJson = convertSongToJson(extSong);
+            songJson.parent = id;
+            songJson.albumId = id;
+            mergedSongs.push(songJson);
+          }
+        }
+
+        mergedSongs.sort((a, b) => {
+          const discA = parseInt(String(a.discNumber || 0), 10);
+          const discB = parseInt(String(b.discNumber || 0), 10);
+          if (discA !== discB) return discA - discB;
+          const trackA = parseInt(String(a.track || 0), 10);
+          const trackB = parseInt(String(b.track || 0), 10);
+          return trackA - trackB;
+        });
+
+        albumEl.song = mergedSongs;
+        albumEl.songCount = mergedSongs.length;
+        albumEl.duration = mergedSongs.reduce(
+          (sum: number, s: any) => sum + (parseInt(String(s.duration || 0), 10)), 0,
+        );
+      }
+
+      return reply.header('Content-Type', 'application/json').send({
+        'subsonic-response': {
+          status: 'ok',
+          version: '1.16.1',
+          album: albumEl,
+        },
+      });
     }
 
+    // External album — fetch from provider directly
     const album = await metadataService.getAlbumAsync(provider, externalId);
     if (!album) {
       return sendReply(reply, createError(request.url, 70, 'Album not found'), format);
