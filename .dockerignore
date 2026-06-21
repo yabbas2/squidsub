@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.git/
+.gitignore
+*.md
+tests/
+vitest.config.ts
+.env
+.env.example
+.DS_Store
+*.log

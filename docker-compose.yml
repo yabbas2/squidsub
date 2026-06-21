@@ -1,0 +1,44 @@
+services:
+  navidrome:
+    image: deluan/navidrome:latest
+    ports:
+      - "4533:4533"
+    environment:
+      ND_SCANNER_SCHEDULE: "0 0 * * *"
+      ND_LOGLEVEL: info
+      ND_LASTFM_ENABLED: ${NAVIDROME_LASTFM_ENABLED:-false}
+      ND_LASTFM_APIKEY: ${NAVIDROME_LASTFM_API_KEY:-""}
+      ND_LASTFM_SECRET: ${NAVIDROME_LASTFM_SECRET:-""}
+    volumes:
+      - navidrome-data:/data
+      - ${MUSIC_PATH:-music}:/music:ro
+    restart: unless-stopped
+
+  squidsub:
+    build: .
+    ports:
+      - "${SQUIDSUB_PORT:-5050}:5050"
+    environment:
+      NAVIDROME_URL: ${NAVIDROME_URL:-http://navidrome:4533}
+      NAVIDROME_ADMIN_USERNAME: ${NAVIDROME_ADMIN_USERNAME:-}
+      NAVIDROME_ADMIN_PASSWORD: ${NAVIDROME_ADMIN_PASSWORD:-}
+      SQUIDWTF__SOURCE: ${SQUIDWTF_SOURCE:-qobuz}
+      SQUIDWTF__QUALITY: ${SQUIDWTF_QUALITY:-lossless}
+      SQUIDWTF__COUNTRY: ${SQUIDWTF_COUNTRY:-US}
+      SQUIDWTF__QOBUZ_BASE_URL: ${SQUIDWTF_QOBUZ_BASE_URL:-https://qobuz.squid.wtf}
+      SQUIDWTF__AMAZON_BASE_URL: ${SQUIDWTF_AMAZON_BASE_URL:-https://amz.squid.wtf}
+      SQUIDWTF__INSTANCES_URL: ${SQUIDWTF_INSTANCES_URL:-}
+      SQUIDWTF__INSTANCES: ${SQUIDWTF_INSTANCES:-}
+      SQUIDSUB__STORAGE_MODE: ${SQUIDSUB_STORAGE_MODE:-permanent}
+      SQUIDSUB__FOLDER_TEMPLATE: ${SQUIDSUB_FOLDER_TEMPLATE:-{artist}/{album}/{track} - {title}}
+      LYRICS__ENABLED: ${LYRICS_ENABLED:-true}
+      LYRICS__LRCLIB_BASE_URL: ${LYRICS_LRCLIB_BASE_URL:-https://lrclib.net}
+    volumes:
+      - ${MUSIC_PATH:-music}:/app/music
+    depends_on:
+      - navidrome
+    restart: unless-stopped
+
+volumes:
+  navidrome-data:
+  music:

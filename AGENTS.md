@@ -19,7 +19,9 @@ npm run lint                  # tsc --noEmit (type-check only)
 
 ## Configuration
 
-All config is read from environment / `.env` and validated via Zod:
+All config is read from environment / `.env` and validated via Zod.
+
+> **Naming convention:** `.env.example` uses **single underscores** (e.g. `SQUIDWTF_SOURCE`) because Docker Compose `.env` files reference these variable names directly. The actual app and `docker-compose.yml` use **double underscores** (`SQUIDWTF__SOURCE`) as required by the Zod schema. When setting env vars outside of Docker Compose, use the double-underscore form from the table below.
 
 | Variable | Default | Description |
 |---|---|---|
