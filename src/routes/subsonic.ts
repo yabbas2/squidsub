@@ -163,9 +163,11 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
 
     // External track — download and stream
     try {
+      console.log(`[stream] external track id=${id} provider=${parsed.provider} externalId=${parsed.externalId}`);
       const { stream, filePath } = await downloadService.downloadAndStreamAsync(parsed.provider, parsed.externalId, undefined);
       const ext = filePath.endsWith('.flac') ? 'audio/flac' : filePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/mpeg';
       const fileSize = stream.length;
+      console.log(`[stream] returning ${fileSize} bytes ext=${ext} path=${filePath}`);
 
       // Handle Range requests for seeking
       const rangeHeader = request.headers['range'];
@@ -182,6 +184,7 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
           }
 
           const chunkSize = end - start + 1;
+          console.log(`[stream] range ${start}-${end}/${fileSize} chunk=${chunkSize}`);
           return reply.status(206)
             .header('Content-Type', ext)
             .header('Accept-Ranges', 'bytes')
@@ -205,6 +208,7 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
         .header('Content-Length', fileSize)
         .send(stream);
     } catch (err: any) {
+      console.log(`[stream] error:`, err.message);
       return sendReply(reply, createError(request.url, 70, `Failed to stream: ${err.message}`), format);
     }
   }

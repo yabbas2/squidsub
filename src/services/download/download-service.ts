@@ -25,17 +25,25 @@ export class BaseDownloadService {
 
     const { song, fullId } = searchResult;
 
+    console.log(`[download] song metadata:`, JSON.stringify({
+      id: song.id, title: song.title, artist: song.artist,
+      album: song.album, trackNumber: song.trackNumber,
+    }));
+
     // Check if file already exists on disk
     const outputDir = getOutputDirectory(song);
     const knownExts = ['.flac', '.mp3', '.m4a', '.ogg', '.wav', '.aac'];
     for (const ext of knownExts) {
       const existing = getOutputPath(song, outputDir, ext);
-      if (fs.existsSync(existing)) {
+      const exists = fs.existsSync(existing);
+      console.log(`[download] cache check: ${existing} exists=${exists}`);
+      if (exists) {
         const stat = fs.statSync(existing);
+        console.log(`[download] cache hit: size=${stat.size}`);
         if (stat.size > 0) {
           return { stream: fs.readFileSync(existing), filePath: existing };
         }
-        // Corrupt/empty file — delete and re-download
+        console.log(`[download] cache hit but empty, re-downloading`);
         fs.unlinkSync(existing);
         break;
       }
@@ -45,9 +53,12 @@ export class BaseDownloadService {
     const p = this.factory.getProvider();
     const config = getConfig();
     const quality = config.SQUIDWTF__QUALITY || 'lossless';
+    console.log(`[download] downloading ${fullId} quality=${quality}`);
     const downloadResult = await p.downloadTrackAsync(fullId, quality, signal);
+    console.log(`[download] downloaded size=${downloadResult.stream.length} ext=${downloadResult.fileExtension}`);
 
     const finalPath = getOutputPath(song, outputDir, downloadResult.fileExtension);
+    console.log(`[download] writing to ${finalPath}`);
 
     // Ensure directory exists
     fs.mkdirSync(outputDir, { recursive: true });
@@ -59,9 +70,11 @@ export class BaseDownloadService {
     try {
       await this.writeTagsAsync(finalPath, song);
     } catch (err) {
-      // Non-critical
+      console.log(`[download] tag writing failed (non-critical):`, err);
     }
 
+    const finalStat = fs.statSync(finalPath);
+    console.log(`[download] final file size=${finalStat.size} path=${finalPath}`);
     return { stream: fs.readFileSync(finalPath), filePath: finalPath };
   }
 
