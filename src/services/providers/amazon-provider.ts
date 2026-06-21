@@ -10,6 +10,14 @@ import {
   AmazonSearchResponse, AmazonSearchTrack, AmazonTrackMetadataResponse,
   AmazonDownloadPrepareResponse, AmazonDownloadStartResponse, AmazonDownloadStatusResponse,
 } from '../../models/amazon-types.js';
+import crypto from 'node:crypto';
+
+function deriveAlbumId(track: AmazonSearchTrack): string | undefined {
+  return track.album?.id
+    || (track.album?.image
+      ? crypto.createHash('sha256').update(track.album.image).digest('hex').slice(0, 12)
+      : undefined);
+}
 
 interface AlbumCacheEntry {
   title: string;
@@ -57,21 +65,20 @@ export class AmazonMusicProvider implements ISquidWTFProvider {
       });
     }
 
-    // Albums: derive from all tracks, dedup by album id
+    // Albums: derive from all tracks, dedup by album id (or image hash fallback)
     const seenAlbumIds = new Set<string>();
     for (const track of allTracks) {
-      const albumId = track.album?.id;
-      if (!albumId || seenAlbumIds.has(albumId)) continue;
-      seenAlbumIds.add(albumId);
+      const albumKey = deriveAlbumId(track);
+      if (!albumKey || seenAlbumIds.has(albumKey)) continue;
+      seenAlbumIds.add(albumKey);
 
-      const albumExternalId = this.makeExternalId('album', albumId);
       const albumTitle = track.album?.title || 'Amazon Music';
       const albumArtist = track.albumArtistName || track.primaryArtistName || 'Unknown';
       const albumSongs = allTracks
-        .filter(t => t.album?.id === albumId)
+        .filter(t => deriveAlbumId(t) === albumKey)
         .map(t => this.mapSearchTrack(t));
 
-      this.albumCache.set(albumId, {
+      this.albumCache.set(albumKey, {
         title: albumTitle,
         artist: albumArtist,
         coverArtUrl: track.album?.image,
@@ -80,14 +87,14 @@ export class AmazonMusicProvider implements ISquidWTFProvider {
       });
 
       searchResult.albums.push({
-        id: albumExternalId,
+        id: this.makeExternalId('album', albumKey),
         title: albumTitle,
         artist: albumArtist,
         coverArtUrl: track.album?.image,
         isLocal: false,
         provider: 'amazon',
         externalProvider: 'amazon',
-        externalId: albumId,
+        externalId: albumKey,
       });
     }
 
@@ -127,8 +134,14 @@ export class AmazonMusicProvider implements ISquidWTFProvider {
 
   async getAlbumAsync(externalId: string): Promise<Album | null> {
     const id = this.parseExternalId(externalId);
-    const cached = this.albumCache.get(id);
-    if (!cached) return null;
+
+    let cached = this.albumCache.get(id);
+    if (!cached) {
+      // Cache miss — try searching by the album id/asin as query
+      await this.searchAllAsync(id, 50, 1, 0);
+      cached = this.albumCache.get(id);
+      if (!cached) return null;
+    }
 
     return {
       id: this.makeExternalId('album', id),
@@ -424,9 +437,8 @@ export class AmazonMusicProvider implements ISquidWTFProvider {
   }
 
   private mapSearchTrack(track: AmazonSearchTrack): Song {
-    const albumId = track.album?.id
-      ? this.makeExternalId('album', track.album.id)
-      : undefined;
+    const albumKey = deriveAlbumId(track);
+    const albumId = albumKey ? this.makeExternalId('album', albumKey) : undefined;
 
     return {
       id: this.makeExternalId('song', track.asin || ''),
