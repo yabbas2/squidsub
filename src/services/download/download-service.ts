@@ -58,24 +58,25 @@ export class BaseDownloadService {
     console.log(`[download] downloaded size=${downloadResult.stream.length} ext=${downloadResult.fileExtension}`);
 
     const finalPath = getOutputPath(song, outputDir, downloadResult.fileExtension);
-    console.log(`[download] writing to ${finalPath}`);
+    console.log(`[download] final path=${finalPath}`);
 
-    // Ensure directory exists
-    fs.mkdirSync(outputDir, { recursive: true });
-
-    // Write file
-    fs.writeFileSync(finalPath, downloadResult.stream);
-
-    // Write tags via ffmpeg
+    // Write file and tags as best-effort cache — always return the in-memory data
     try {
-      await this.writeTagsAsync(finalPath, song);
-    } catch (err) {
-      console.log(`[download] tag writing failed (non-critical):`, err);
+      fs.mkdirSync(outputDir, { recursive: true });
+      fs.writeFileSync(finalPath, downloadResult.stream);
+      console.log(`[download] cache write OK`);
+    } catch (err: any) {
+      console.log(`[download] cache write failed (non-critical): ${err.message}`);
     }
 
-    const finalStat = fs.statSync(finalPath);
-    console.log(`[download] final file size=${finalStat.size} path=${finalPath}`);
-    return { stream: fs.readFileSync(finalPath), filePath: finalPath };
+    try {
+      await this.writeTagsAsync(finalPath, song);
+      console.log(`[download] tags written OK`);
+    } catch (err: any) {
+      console.log(`[download] tag writing failed (non-critical): ${err.message}`);
+    }
+
+    return { stream: downloadResult.stream, filePath: finalPath };
   }
 
   async downloadTrackAsync(trackId: string, quality?: string): Promise<string | null> {
