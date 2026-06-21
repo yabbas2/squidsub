@@ -165,15 +165,45 @@ export async function subsonicRoutes(app: FastifyInstance, services: ServiceCont
     try {
       const { stream, filePath } = await downloadService.downloadAndStreamAsync(parsed.provider, parsed.externalId, undefined);
       const ext = filePath.endsWith('.flac') ? 'audio/flac' : filePath.endsWith('.mp3') ? 'audio/mpeg' : 'audio/mpeg';
+      const fileSize = stream.length;
+
+      // Handle Range requests for seeking
+      const rangeHeader = request.headers['range'];
+      if (rangeHeader && !asDownload) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? Math.min(parseInt(match[2], 10), fileSize - 1) : fileSize - 1;
+
+          if (start >= fileSize) {
+            return reply.status(416)
+              .header('Content-Range', `bytes */${fileSize}`)
+              .send();
+          }
+
+          const chunkSize = end - start + 1;
+          return reply.status(206)
+            .header('Content-Type', ext)
+            .header('Accept-Ranges', 'bytes')
+            .header('Content-Range', `bytes ${start}-${end}/${fileSize}`)
+            .header('Content-Length', chunkSize)
+            .send(stream.slice(start, end + 1));
+        }
+      }
 
       if (asDownload) {
         const fileName = filePath.split('/').pop() || 'track.mp3';
         return reply.header('Content-Type', ext)
           .header('Content-Disposition', `attachment; filename="${fileName}"`)
+          .header('Accept-Ranges', 'bytes')
+          .header('Content-Length', fileSize)
           .send(stream);
       }
 
-      return reply.header('Content-Type', ext).send(stream);
+      return reply.header('Content-Type', ext)
+        .header('Accept-Ranges', 'bytes')
+        .header('Content-Length', fileSize)
+        .send(stream);
     } catch (err: any) {
       return sendReply(reply, createError(request.url, 70, `Failed to stream: ${err.message}`), format);
     }

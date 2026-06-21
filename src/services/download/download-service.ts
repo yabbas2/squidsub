@@ -31,7 +31,13 @@ export class BaseDownloadService {
     for (const ext of knownExts) {
       const existing = getOutputPath(song, outputDir, ext);
       if (fs.existsSync(existing)) {
-        return { stream: fs.readFileSync(existing), filePath: existing };
+        const stat = fs.statSync(existing);
+        if (stat.size > 0) {
+          return { stream: fs.readFileSync(existing), filePath: existing };
+        }
+        // Corrupt/empty file — delete and re-download
+        fs.unlinkSync(existing);
+        break;
       }
     }
 
@@ -109,12 +115,13 @@ export class BaseDownloadService {
     if (song.provider) args.push('-metadata', `comment=provider:${song.provider}`);
 
     // Cover art
+    let coverPath: string | undefined;
     if (song.coverArtUrl) {
       try {
         const coverRes = await fetch(song.coverArtUrl);
         if (coverRes.ok) {
           const coverData = Buffer.from(await coverRes.arrayBuffer());
-          const coverPath = filePath + '.cover.tmp';
+          coverPath = filePath + '.cover.tmp';
           fs.writeFileSync(coverPath, coverData);
           args.push('-i', coverPath);
           args.push('-map', '0:0');
@@ -132,13 +139,13 @@ export class BaseDownloadService {
     args.push('-y', tempPath);
 
     try {
-      spawnSync('ffmpeg', args, { timeout: 10000, stdio: 'ignore' });
-      if (fs.existsSync(tempPath)) {
+      const result = spawnSync('ffmpeg', args, { timeout: 10000, stdio: 'ignore' });
+      if (result.status === 0 && fs.existsSync(tempPath)) {
         fs.renameSync(tempPath, filePath);
       }
-    } catch {
-      // Clean up temp file if it exists
+    } finally {
       try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+      if (coverPath) { try { fs.unlinkSync(coverPath); } catch {} }
     }
   }
 }
