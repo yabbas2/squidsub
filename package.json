@@ -1,0 +1,31 @@
+{
+  "name": "squidsub-node",
+  "version": "1.0.0",
+  "description": "Subsonic API proxy merging Navidrome + streaming providers",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.2.1",
+    "@fastify/cors": "^10.0.2",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.2",
+    "fast-xml-parser": "^5.0.9",
+    "undici": "^7.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.2",
+    "vitest": "^3.0.5"
+  }
+}
